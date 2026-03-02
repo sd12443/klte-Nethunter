@@ -15,13 +15,22 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential git wget xz-utils bc libssl-dev libncurses5-dev
+        sudo apt-get install -y \
+          build-essential \
+          git \
+          wget \
+          xz-utils \
+          bc \
+          libssl-dev \
+          libncurses5-dev
     
     - name: Download and extract cross-compiler
       run: |
         mkdir -p ~/toolchain
         cd ~/toolchain
+        echo "Downloading cross-compiler..."
         wget -q --show-progress https://www.mediafire.com/file/9h19841nsm44z58/arm-cortex_a15-linux-gnueabihf-linaro_4.9.4-2015.06-build_2015_07_14.tar.xz/file -O compiler.tar.xz
+        echo "Extracting cross-compiler..."
         tar -xf compiler.tar.xz
     
     - name: Clone NetHunter Kernel
@@ -57,7 +66,7 @@ jobs:
         cp ~/rtl8821au/8821au.ko ~/artifacts/modules/3.4.0-nethunter-klte-eur-1.4/
     
     - name: Upload artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: NetHunter-Kernel-RTL8821AU
         path: ~/artifacts/

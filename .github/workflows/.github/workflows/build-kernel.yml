@@ -10,103 +10,72 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-
-    # ------------------------------------------------
-    # 1. Checkout repository
-    # ------------------------------------------------
     - name: Checkout source
       uses: actions/checkout@v4
 
-
-    # ------------------------------------------------
-    # 2. Install build dependencies
-    # ------------------------------------------------
     - name: Install dependencies
       run: |
         sudo apt update
         sudo apt install -y \
-          build-essential \
-          bc \
-          bison \
-          flex \
-          libssl-dev \
-          libelf-dev \
-          libncurses5-dev \
-          unzip \
-          wget \
-          xz-utils
+          build-essential bc bison flex \
+          libssl-dev libelf-dev \
+          libncurses5-dev wget xz-utils unzip
 
-
-    # ------------------------------------------------
-    # 3. Download Toolchain (FROM YOUR RELEASE)
-    # ------------------------------------------------
-    - name: Download cross-compiler
+    # -----------------------------
+    # DOWNLOAD TOOLCHAIN (FIXED)
+    # -----------------------------
+    - name: Download toolchain
       run: |
         mkdir -p $HOME/toolchain
         cd $HOME/toolchain
 
-        echo "Downloading cross-compiler..."
+        echo "Downloading toolchain..."
 
-        wget -O compiler.tar.xz \
-        https://github.com/sd12443/klte-Nethunter/releases/download/toolchain-v1/arm-cortex_a15-linux-gnueabihf-linaro_4.9.4-2015.06-build_2015_07_14.tar.xz
+        wget -L \
+        https://github.com/sd12443/klte-Nethunter/releases/download/toolchain-v1/arm-cortex_a15-linux-gnueabihf-linaro_4.9.4-2015.06-build_2015_07_14.tar.xz \
+        -O toolchain.tar.xz
 
-        echo "Verify file type:"
-        file compiler.tar.xz
+        echo "Checking file type:"
+        file toolchain.tar.xz
 
-        echo "Extracting toolchain..."
-        tar -xJf compiler.tar.xz
+        # FAIL EARLY if wrong download
+        file toolchain.tar.xz | grep "XZ compressed data"
 
+        echo "Extracting..."
+        tar -xJf toolchain.tar.xz
 
-    # ------------------------------------------------
-    # 4. Setup environment variables (PERSISTENT)
-    # ------------------------------------------------
-    - name: Setup toolchain environment
+    # -----------------------------
+    # SET ENVIRONMENT
+    # -----------------------------
+    - name: Setup toolchain
       run: |
-        TOOLCHAIN_PATH=$(find $HOME/toolchain -type d -name "*linaro*" | head -n 1)
+        TOOLCHAIN=$(find $HOME/toolchain -type d -name "*linaro*" | head -n 1)
 
-        echo "$TOOLCHAIN_PATH/bin" >> $GITHUB_PATH
+        echo "$TOOLCHAIN/bin" >> $GITHUB_PATH
         echo "ARCH=arm" >> $GITHUB_ENV
         echo "CROSS_COMPILE=arm-eabi-" >> $GITHUB_ENV
 
-        echo "Toolchain located at:"
-        echo $TOOLCHAIN_PATH
-
         arm-eabi-gcc --version || true
 
-
-    # ------------------------------------------------
-    # 5. Clean previous builds
-    # ------------------------------------------------
-    - name: Clean build
-      run: |
-        make clean || true
-        rm -rf out
-
-
-    # ------------------------------------------------
-    # 6. Configure Kernel (VERY IMPORTANT)
-    # ------------------------------------------------
+    # -----------------------------
+    # CONFIGURE KERNEL
+    # -----------------------------
     - name: Configure kernel
       run: |
         make O=out ARCH=$ARCH klte_eur_defconfig
 
-
-    # ------------------------------------------------
-    # 7. Build Kernel
-    # ------------------------------------------------
+    # -----------------------------
+    # BUILD
+    # -----------------------------
     - name: Build kernel
       run: |
-        make O=out \
-        ARCH=$ARCH \
-        CROSS_COMPILE=$CROSS_COMPILE \
-        -j$(nproc)
+        make O=out ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc)
 
-
-    # ------------------------------------------------
-    # 8. Upload Kernel Artifact
-    # ------------------------------------------------
-    - name: Upload zImage
+    # -----------------------------
+    # UPLOAD RESULT
+    # -----------------------------
+    - name: Upload kernel
       uses: actions/upload-artifact@v4
       with:
-        name: nethunter-klte-kernel
+        name: kernel-zimage
         path: out/arch/arm/boot/zImage

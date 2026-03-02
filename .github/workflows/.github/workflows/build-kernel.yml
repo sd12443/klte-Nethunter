@@ -1,187 +1,33 @@
-name: Build NetHunter Kernel with RTL8821AU Support
+# Build Workflow for Kernel
+
+name: Build Kernel
 
 on:
   push:
-    branches: [ main, master ]
-  workflow_dispatch:
+    branches:
+      - main
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Install build dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          git \
-          wget \
-          xz-utils \
-          bc \
-          libssl-dev \
-          libncurses5-dev \
-          bison \
-          flex \
-          curl
-    
-    - name: Setup cross-compiler directory
-      run: |
-        mkdir -p /home/runner/build/toolchain
-        cd /home/runner/build/toolchain
-        echo "Setting up Linaro toolchain..."
-        
-        # Try direct download, if fails use mirror
-        if ! wget -q https://www.mediafire.com/file/9h19841nsm44z58/arm-cortex_a15-linux-gnueabihf-linaro_4.9.4-2015.06-build_2015_07_14.tar.xz/file -O compiler.tar.xz; then
-          echo "MediaFire download failed, trying mirror..."
-          wget -q https://releases.linaro.org/components/toolchain/binaries/4.9-2015.06/arm-linux-gnueabihf/gcc-linaro-4.9-2015.06-x86_64_arm-linux-gnueabihf.tar.xz -O compiler.tar.xz
-        fi
-        
-        echo "Extracting toolchain..."
-        tar -xf compiler.tar.xz
-        echo "Toolchain ready"
-        ls -la
-    
-    - name: Clone NetHunter Kernel
-      run: |
-        cd /home/runner
-        git clone https://github.com/jcadduono/nethunter_kernel_klte.git -b touchwiz-6.0
-        cd nethunter_kernel_klte
-        echo "Kernel cloned successfully"
-        ls -la
-    
-    - name: Update build.sh with correct toolchain path
-      run: |
-        cd /home/runner/nethunter_kernel_klte
-        
-        # Find the actual toolchain directory name (might be gcc-linaro-... or arm-cortex_a15-...)
-        TOOLCHAIN_DIR=$(ls -d /home/runner/build/toolchain/*/ | head -1 | sed 's:/$::')
-        echo "Found toolchain at: $TOOLCHAIN_DIR"
-        
-        # Update build.sh line 54
-        sed -i "s|TOOLCHAIN=.*|TOOLCHAIN=$TOOLCHAIN_DIR|g" build.sh
-        
-        # Ensure VARIANT=eur on line 69
-        sed -i 's|VARIANT=.*|VARIANT=eur|g' build.sh
-        
-        # Update menuconfig.sh line 8
-        sed -i "s|TOOLCHAIN=.*|TOOLCHAIN=$TOOLCHAIN_DIR|g" menuconfig.sh
-        
-        echo "Configuration updated"
-        echo "=== build.sh TOOLCHAIN line ==="
-        grep "TOOLCHAIN=" build.sh | head -1
-        echo "=== build.sh VARIANT line ==="
-        grep "VARIANT=" build.sh | head -1
-    
-    - name: Build kernel using ./build.sh
-      run: |
-        cd /home/runner/nethunter_kernel_klte
-        
-        echo "Starting kernel build..."
-        bash ./build.sh 2>&1 | tee build.log
-        
-        # Check if build succeeded
-        if [ -f build/arch/arm/boot/zImage ]; then
-          echo "✓ Kernel built successfully!"
-          ls -lh build/arch/arm/boot/zImage
-        else
-          echo "✗ Build failed - checking logs..."
-          tail -100 build.log
-          exit 1
-        fi
-    
-    - name: Clone RTL8821AU driver
-      run: |
-        cd /home/runner
-        git clone https://github.com/ivanovborislav/rtl8821au.git
-        echo "RTL8821AU cloned successfully"
-    
-    - name: Configure RTL8821AU Makefile
-      run: |
-        cd /home/runner/rtl8821au
-        
-        # Get toolchain path
-        TOOLCHAIN_DIR=$(ls -d /home/runner/build/toolchain/*/ | head -1 | sed 's:/$::')
-        echo "Using toolchain: $TOOLCHAIN_DIR"
-        
-        # Change CONFIG_PLATFORM_I386_PC from y to n (line 142)
-        sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/' Makefile
-        
-        # Add CONFIG_PLATFORM_ANDROID_ARM = y after the above line
-        if ! grep -q "CONFIG_PLATFORM_ANDROID_ARM = y" Makefile; then
-          # Find the line with CONFIG_PLATFORM_I386_PC = n and add after it
-          sed -i '/CONFIG_PLATFORM_I386_PC = n/a CONFIG_PLATFORM_ANDROID_ARM = y' Makefile
-        fi
-        
-        echo "Makefile updated - checking changes:"
-        grep -A 1 "CONFIG_PLATFORM_I386_PC = n" Makefile
-    
-    - name: Add Android ARM build configuration to Makefile
-      run: |
-        cd /home/runner/rtl8221au
-        
-        TOOLCHAIN_DIR=$(ls -d /home/runner/build/toolchain/*/ | head -1 | sed 's:/$::')
-        KERNEL_SRC="/home/runner/nethunter_kernel_klte/build"
-        
-        # Add the Android ARM configuration block if not already present
-        if ! grep -q "ifeq.*CONFIG_PLATFORM_ANDROID_ARM" Makefile; then
-          cat >> Makefile << EOF
+    - name: Checkout code
+      uses: actions/checkout@v2
 
-ifeq (\$(CONFIG_PLATFORM_ANDROID_ARM), y)
-EXTRA_CFLAGS += -DCONFIG_LITTLE_ENDIAN
-EXTRA_CFLAGS += -DCONFIG_IOCTL_CFG80211 -DRTW_USE_CFG80211_STA_EVENT
-ARCH ?= arm
-CROSS_COMPILE := $TOOLCHAIN_DIR/bin/arm-eabi-
-KVER ?= 3.4.0-nethunter-klte-eur-1.4
-KSRC := $KERNEL_SRC
-MODDESTDIR := /lib/modules/\$(KVER)/kernel/drivers/net/wireless/
-INSTALL_PREFIX :=
-endif
-EOF
-        fi
-        
-        echo "Android ARM config added"
-        tail -15 Makefile
-    
-    - name: Build RTL8821AU module
-      run: |
-        cd /home/runner/rtl8821au
-        
-        TOOLCHAIN_DIR=$(ls -d /home/runner/build/toolchain/*/ | head -1 | sed 's:/$::')
-        
-        echo "Building RTL8821AU module..."
-        make ARCH=arm CROSS_COMPILE=$TOOLCHAIN_DIR/bin/arm-eabi- \
-          KVER=3.4.0-nethunter-klte-eur-1.4 \
-          KSRC=/home/runner/nethunter_kernel_klte/build \
-          -j$(nproc) 2>&1 | tee module_build.log
-        
-        if [ -f 8821au.ko ]; then
-          echo "✓ RTL8821AU module built successfully!"
-          ls -lh 8821au.ko
-        else
-          echo "✗ Module build failed"
-          tail -50 module_build.log
-          exit 1
-        fi
-    
-    - name: Prepare deployment artifacts
-      run: |
-        mkdir -p /home/runner/artifacts/modules/3.4.0-nethunter-klte-eur-1.4
-        
-        # Copy kernel
-        cp /home/runner/nethunter_kernel_klte/build/arch/arm/boot/zImage /home/runner/artifacts/
-        
-        # Copy WiFi module
-        cp /home/runner/rtl8821au/8821au.ko /home/runner/artifacts/modules/3.4.0-nethunter-klte-eur-1.4/
-        
-        echo "✓ Artifacts prepared:"
-        tree /home/runner/artifacts/ || find /home/runner/artifacts/ -type f
-    
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+    - name: Download cross-compiler
+      uses: actions/download-artifact@v2
       with:
-        name: NetHunter-RTL8821AU-G900F
-        path: /home/runner/artifacts/
-        retention-days: 30
+        name: toolchain
+        path: ./toolchain
+
+    - name: Install Cross-Compiler
+      run: |
+        cd ./toolchain
+        wget https://github.com/sd12443/klte-Nethunter/releases/download/toolchain-v1/toolchain.zip
+        unzip toolchain.zip
+        export PATH=$PATH:$(pwd)/bin
+
+    - name: Build Kernel
+      run: |
+        make clean
+        make O=out ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- -j$(nproc)

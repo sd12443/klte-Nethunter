@@ -1,36 +1,64 @@
-# This is a basic workflow to help you get started with Actions
+name: Build NetHunter Kernel with RTL8821AU Support
 
-name: CI
-
-# Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-
-  # Allows you to run this workflow manually from the Actions tab
+    branches: [ main, master ]
   workflow_dispatch:
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
   build:
-    # The type of runner that the job will run on
     runs-on: ubuntu-latest
-
-    # Steps represent a sequence of tasks that will be executed as part of the job
+    
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v4
-
-      # Runs a single command using the runners shell
-      - name: Run a one-line script
-        run: echo Hello, world!
-
-      # Runs a set of commands using the runners shell
-      - name: Run a multi-line script
-        run: |
-          echo Add other actions to build,
-          echo test, and deploy your project.
+    - uses: actions/checkout@v3
+    
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential git wget xz-utils bc libssl-dev libncurses5-dev
+    
+    - name: Download and extract cross-compiler
+      run: |
+        mkdir -p ~/toolchain
+        cd ~/toolchain
+        wget -q --show-progress https://www.mediafire.com/file/9h19841nsm44z58/arm-cortex_a15-linux-gnueabihf-linaro_4.9.4-2015.06-build_2015_07_14.tar.xz/file -O compiler.tar.xz
+        tar -xf compiler.tar.xz
+    
+    - name: Clone NetHunter Kernel
+      run: |
+        cd ~
+        git clone https://github.com/jcadduono/nethunter_kernel_klte.git -b touchwiz-6.0
+    
+    - name: Clone RTL8821AU driver
+      run: |
+        cd ~
+        git clone https://github.com/ivanovborislav/rtl8821au.git
+    
+    - name: Build kernel
+      run: |
+        cd ~/nethunter_kernel_klte
+        export TOOLCHAIN=~/toolchain/arm-cortex_a15-linux-gnueabihf-linaro_4.9.4-2015.06
+        make ARCH=arm CROSS_COMPILE=$TOOLCHAIN/bin/arm-eabi- mrproper
+        make ARCH=arm CROSS_COMPILE=$TOOLCHAIN/bin/arm-eabi- -j$(nproc) zImage
+    
+    - name: Build RTL8821AU module
+      run: |
+        cd ~/rtl8821au
+        export TOOLCHAIN=~/toolchain/arm-cortex_a15-linux-gnueabihf-linaro_4.9.4-2015.06
+        export KVER="3.4.0-nethunter-klte-eur-1.4"
+        export KSRC=~/nethunter_kernel_klte
+        sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/' Makefile
+        make ARCH=arm CROSS_COMPILE=$TOOLCHAIN/bin/arm-eabi- KVER=$KVER KSRC=$KSRC -j$(nproc)
+    
+    - name: Prepare artifacts
+      run: |
+        mkdir -p ~/artifacts/modules/3.4.0-nethunter-klte-eur-1.4
+        cp ~/nethunter_kernel_klte/arch/arm/boot/zImage ~/artifacts/
+        cp ~/rtl8821au/8821au.ko ~/artifacts/modules/3.4.0-nethunter-klte-eur-1.4/
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: NetHunter-Kernel-RTL8821AU
+        path: ~/artifacts/
+        retention-days: 30

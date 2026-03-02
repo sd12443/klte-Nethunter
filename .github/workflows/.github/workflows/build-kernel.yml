@@ -1,9 +1,9 @@
-name: Build NetHunter Kernel
+name: Build NetHunter Kernel with RTL8821AU Support
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:  # Allows manual triggering
+    branches: [ main, master ]
+  workflow_dispatch:  # Allows manual triggering from GitHub UI
 
 jobs:
   build:
@@ -12,39 +12,136 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     
-    - name: Install dependencies
+    - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential git wget
+        sudo apt-get install -y \
+          build-essential \
+          git \
+          wget \
+          xz-utils \
+          bc \
+          libssl-dev \
+          libncurses5-dev
     
-    - name: Download cross-compiler
+    - name: Download and extract cross-compiler
       run: |
-        mkdir -p /home/runner/toolchain
-        cd /home/runner/toolchain
-        wget https://www.mediafire.com/file/9h19841nsm44z58/arm-cortex_a15-linux-gnueabihf-linaro_4.9.4-2015.06-build_2015_07_14.tar.xz/file -O compiler.tar.xz
+        mkdir -p ~/toolchain
+        cd ~/toolchain
+        echo "Downloading cross-compiler (this may take a few minutes)..."
+        wget -q --show-progress https://www.mediafire.com/file/9h19841nsm44z58/arm-cortex_a15-linux-gnueabihf-linaro_4.9.4-2015.06-build_2015_07_14.tar.xz/file -O compiler.tar.xz
+        echo "Extracting cross-compiler..."
         tar -xf compiler.tar.xz
+        ls -la
     
-    - name: Clone NetHunter Kernel
+    - name: Clone NetHunter Kernel (klte - Galaxy S5)
       run: |
+        cd ~
         git clone https://github.com/jcadduono/nethunter_kernel_klte.git -b touchwiz-6.0
         cd nethunter_kernel_klte
+        echo "Kernel cloned successfully"
     
-    - name: Configure and build kernel
+    - name: Clone RTL8821AU driver
       run: |
-        cd nethunter_kernel_klte
-        ./menuconfig.sh
-        ./build.sh
+        cd ~
+        git clone https://github.com/ivanovborislav/rtl8821au.git
+        echo "RTL8821AU driver cloned successfully"
     
-    - name: Clone and build kernel modules
+    - name: Configure kernel with wireless drivers
       run: |
-        git clone https://github.com/sd12443/rtl8188eu.git
-        cd rtl8188eu
-        make
+        cd ~/nethunter_kernel_klte
+        # Set environment variables for the build
+        export TOOLCHAIN=~/toolchain/arm-cortex_a15-linux-gnueabihf-linaro_4.9.4-2015.06
+        export VARIANT=eur
+        
+        # Create kernel config
+        make ARCH=arm CROSS_COMPILE=$TOOLCHAIN/bin/arm-eabi- mrproper
+        make ARCH=arm CROSS_COMPILE=$TOOLCHAIN/bin/arm-eabi- defconfig
+        
+        echo "Kernel configured"
     
-    - name: Upload artifacts
+    - name: Build NetHunter kernel
+      run: |
+        cd ~/nethunter_kernel_klte
+        export TOOLCHAIN=~/toolchain/arm-cortex_a15-linux-gnueabihf-linaro_4.9.4-2015.06
+        
+        echo "Building kernel (this may take 15-30 minutes)..."
+        make ARCH=arm CROSS_COMPILE=$TOOLCHAIN/bin/arm-eabi- -j$(nproc) zImage
+        
+        if [ -f arch/arm/boot/zImage ]; then
+          echo "✓ Kernel zImage built successfully"
+        else
+          echo "✗ Kernel build failed"
+          exit 1
+        fi
+    
+    - name: Build RTL8821AU kernel module
+      run: |
+        cd ~/rtl8821au
+        export TOOLCHAIN=~/toolchain/arm-cortex_a15-linux-gnueabihf-linaro_4.9.4-2015.06
+        export KVER="3.4.0-nethunter-klte-eur-1.4"
+        export KSRC=~/nethunter_kernel_klte
+        
+        # Edit Makefile for Android ARM platform
+        sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/' Makefile
+        
+        # Add Android ARM configuration
+        if ! grep -q "CONFIG_PLATFORM_ANDROID_ARM = y" Makefile; then
+          sed -i '/CONFIG_PLATFORM_I386_PC = n/a CONFIG_PLATFORM_ANDROID_ARM = y' Makefile
+        fi
+        
+        # Add build configuration section if needed
+        cat >> Makefile << 'EOF'
+
+ifeq ($(CONFIG_PLATFORM_ANDROID_ARM), y)
+EXTRA_CFLAGS += -DCONFIG_LITTLE_ENDIAN
+EXTRA_CFLAGS += -DCONFIG_IOCTL_CFG80211 -DRTW_USE_CFG80211_STA_EVENT
+ARCH ?= arm
+CROSS_COMPILE := $(TOOLCHAIN)/bin/arm-eabi-
+KVER ?= $(KVER)
+KSRC := $(KSRC)
+MODDESTDIR := /lib/modules/$(KVER)/kernel/drivers/net/wireless/
+INSTALL_PREFIX :=
+endif
+EOF
+        
+        echo "Building RTL8821AU driver..."
+        make ARCH=arm CROSS_COMPILE=$TOOLCHAIN/bin/arm-eabi- \
+          KVER=$KVER KSRC=$KSRC -j$(nproc)
+        
+        if [ -f 8821au.ko ]; then
+          echo "✓ RTL8821AU module built successfully"
+        else
+          echo "✗ RTL8821AU build failed"
+          exit 1
+        fi
+    
+    - name: Prepare build artifacts
+      run: |
+        mkdir -p ~/build-artifacts/modules/3.4.0-nethunter-klte-eur-1.4
+        
+        # Copy kernel zImage
+        cp ~/nethunter_kernel_klte/arch/arm/boot/zImage ~/build-artifacts/
+        
+        # Copy RTL8821AU module
+        cp ~/rtl8821au/8821au.ko ~/build-artifacts/modules/3.4.0-nethunter-klte-eur-1.4/
+        
+        echo "Build artifacts prepared"
+        ls -la ~/build-artifacts/
+    
+    - name: Upload build artifacts
       uses: actions/upload-artifact@v3
       with:
-        name: kernel-build
-        path: |
-          nethunter_kernel_klte/build/arch/arm/boot/zImage
-          rtl8188eu/*.ko
+        name: NetHunter-Kernel-RTL8821AU
+        path: ~/build-artifacts/
+        retention-days: 30
+    
+    - name: Create release with build artifacts
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: |
+          ~/build-artifacts/zImage
+          ~/build-artifacts/modules/3.4.0-nethunter-klte-eur-1.4/8821au.ko
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

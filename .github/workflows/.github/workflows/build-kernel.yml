@@ -1,33 +1,58 @@
-# Build Workflow for Kernel
-
 name: Build Kernel
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
+    - name: Checkout source
+      uses: actions/checkout@v4
 
-    - name: Download cross-compiler
-      uses: actions/download-artifact@v2
-      with:
-        name: toolchain
-        path: ./toolchain
-
-    - name: Install Cross-Compiler
+    # Install required packages
+    - name: Install dependencies
       run: |
-        cd ./toolchain
-        wget https://github.com/sd12443/klte-Nethunter/releases/download/toolchain-v1/toolchain.zip
+        sudo apt update
+        sudo apt install -y \
+          build-essential bc bison flex \
+          libssl-dev libelf-dev \
+          libncurses5-dev unzip wget
+
+    # Download toolchain from YOUR releases
+    - name: Download toolchain
+      run: |
+        mkdir -p $HOME/toolchain
+        cd $HOME/toolchain
+
+        wget -O toolchain.zip \
+        https://github.com/sd12443/klte-Nethunter/releases/download/toolchain-v1/toolchain.zip
+
         unzip toolchain.zip
-        export PATH=$PATH:$(pwd)/bin
 
-    - name: Build Kernel
+    # Persist PATH across steps
+    - name: Setup environment
       run: |
-        make clean
-        make O=out ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- -j$(nproc)
+        echo "$HOME/toolchain/bin" >> $GITHUB_PATH
+        echo "ARCH=arm" >> $GITHUB_ENV
+        echo "CROSS_COMPILE=arm-linux-gnueabi-" >> $GITHUB_ENV
+
+    # Configure kernel (VERY IMPORTANT)
+    - name: Configure kernel
+      run: |
+        make O=out ARCH=$ARCH klte_eur_defconfig
+
+    # Build kernel
+    - name: Build kernel
+      run: |
+        make O=out ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc)
+
+    # Upload result
+    - name: Upload zImage
+      uses: actions/upload-artifact@v4
+      with:
+        name: kernel-zimage
+        path: out/arch/arm/boot/zImage

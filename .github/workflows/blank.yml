@@ -1,0 +1,68 @@
+name: Build NetHunter Kernel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install deps
+      run: |
+        sudo apt update
+        sudo apt install -y build-essential bc bison flex \
+        libssl-dev libelf-dev libncurses5-dev wget xz-utils
+
+    # -------------------------------
+    # Download REAL toolchain
+    # -------------------------------
+    - name: Get Linaro toolchain
+      run: |
+        mkdir -p $HOME/toolchain
+        cd $HOME/toolchain
+
+        wget https://releases.linaro.org/components/toolchain/binaries/4.9-2015.06/arm-eabi/gcc-linaro-4.9-2015.06-x86_64_arm-eabi.tar.xz
+
+        echo "SIZE:"
+        ls -lh
+
+        echo "TYPE:"
+        file gcc-linaro-4.9-2015.06-x86_64_arm-eabi.tar.xz
+
+        tar -xJf gcc-linaro-4.9-2015.06-x86_64_arm-eabi.tar.xz
+
+    # -------------------------------
+    # Setup compiler
+    # -------------------------------
+    - name: Setup env
+      run: |
+        echo "$HOME/toolchain/gcc-linaro-4.9-2015.06-x86_64_arm-eabi/bin" >> $GITHUB_PATH
+        echo "ARCH=arm" >> $GITHUB_ENV
+        echo "CROSS_COMPILE=arm-eabi-" >> $GITHUB_ENV
+
+        arm-eabi-gcc --version
+
+    # -------------------------------
+    # Configure kernel
+    # -------------------------------
+    - name: Configure
+      run: |
+        make O=out ARCH=$ARCH klte_eur_defconfig
+
+    # -------------------------------
+    # Build kernel
+    # -------------------------------
+    - name: Build
+      run: |
+        make O=out ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc)
+
+    # -------------------------------
+    # Upload result
+    # -------------------------------
+    - uses: actions/upload-artifact@v4
+      with:
+        name: kernel
+        path: out/arch/arm/boot/zImage

@@ -1,4 +1,4 @@
-name: Build Kernel
+name: Build NetHunter KLTE Kernel
 
 on:
   push:
@@ -10,49 +10,103 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
+
+    # ------------------------------------------------
+    # 1. Checkout repository
+    # ------------------------------------------------
     - name: Checkout source
       uses: actions/checkout@v4
 
-    # Install required packages
+
+    # ------------------------------------------------
+    # 2. Install build dependencies
+    # ------------------------------------------------
     - name: Install dependencies
       run: |
         sudo apt update
         sudo apt install -y \
-          build-essential bc bison flex \
-          libssl-dev libelf-dev \
-          libncurses5-dev unzip wget
+          build-essential \
+          bc \
+          bison \
+          flex \
+          libssl-dev \
+          libelf-dev \
+          libncurses5-dev \
+          unzip \
+          wget \
+          xz-utils
 
-    # Download toolchain from YOUR releases
-    - name: Download toolchain
+
+    # ------------------------------------------------
+    # 3. Download Toolchain (FROM YOUR RELEASE)
+    # ------------------------------------------------
+    - name: Download cross-compiler
       run: |
         mkdir -p $HOME/toolchain
         cd $HOME/toolchain
 
-        wget -O toolchain.zip \
-        https://github.com/sd12443/klte-Nethunter/releases/download/toolchain-v1/toolchain.zip
+        echo "Downloading cross-compiler..."
 
-        unzip toolchain.zip
+        wget -O compiler.tar.xz \
+        https://github.com/sd12443/klte-Nethunter/releases/download/toolchain-v1/arm-cortex_a15-linux-gnueabihf-linaro_4.9.4-2015.06-build_2015_07_14.tar.xz
 
-    # Persist PATH across steps
-    - name: Setup environment
+        echo "Verify file type:"
+        file compiler.tar.xz
+
+        echo "Extracting toolchain..."
+        tar -xJf compiler.tar.xz
+
+
+    # ------------------------------------------------
+    # 4. Setup environment variables (PERSISTENT)
+    # ------------------------------------------------
+    - name: Setup toolchain environment
       run: |
-        echo "$HOME/toolchain/bin" >> $GITHUB_PATH
-        echo "ARCH=arm" >> $GITHUB_ENV
-        echo "CROSS_COMPILE=arm-linux-gnueabi-" >> $GITHUB_ENV
+        TOOLCHAIN_PATH=$(find $HOME/toolchain -type d -name "*linaro*" | head -n 1)
 
-    # Configure kernel (VERY IMPORTANT)
+        echo "$TOOLCHAIN_PATH/bin" >> $GITHUB_PATH
+        echo "ARCH=arm" >> $GITHUB_ENV
+        echo "CROSS_COMPILE=arm-eabi-" >> $GITHUB_ENV
+
+        echo "Toolchain located at:"
+        echo $TOOLCHAIN_PATH
+
+        arm-eabi-gcc --version || true
+
+
+    # ------------------------------------------------
+    # 5. Clean previous builds
+    # ------------------------------------------------
+    - name: Clean build
+      run: |
+        make clean || true
+        rm -rf out
+
+
+    # ------------------------------------------------
+    # 6. Configure Kernel (VERY IMPORTANT)
+    # ------------------------------------------------
     - name: Configure kernel
       run: |
         make O=out ARCH=$ARCH klte_eur_defconfig
 
-    # Build kernel
+
+    # ------------------------------------------------
+    # 7. Build Kernel
+    # ------------------------------------------------
     - name: Build kernel
       run: |
-        make O=out ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE -j$(nproc)
+        make O=out \
+        ARCH=$ARCH \
+        CROSS_COMPILE=$CROSS_COMPILE \
+        -j$(nproc)
 
-    # Upload result
+
+    # ------------------------------------------------
+    # 8. Upload Kernel Artifact
+    # ------------------------------------------------
     - name: Upload zImage
       uses: actions/upload-artifact@v4
       with:
-        name: kernel-zimage
+        name: nethunter-klte-kernel
         path: out/arch/arm/boot/zImage

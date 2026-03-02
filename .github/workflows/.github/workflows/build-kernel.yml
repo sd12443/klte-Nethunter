@@ -1,0 +1,50 @@
+name: Build NetHunter Kernel
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential git wget
+    
+    - name: Download cross-compiler
+      run: |
+        mkdir -p /home/runner/toolchain
+        cd /home/runner/toolchain
+        wget https://www.mediafire.com/file/9h19841nsm44z58/arm-cortex_a15-linux-gnueabihf-linaro_4.9.4-2015.06-build_2015_07_14.tar.xz/file -O compiler.tar.xz
+        tar -xf compiler.tar.xz
+    
+    - name: Clone NetHunter Kernel
+      run: |
+        git clone https://github.com/jcadduono/nethunter_kernel_klte.git -b touchwiz-6.0
+        cd nethunter_kernel_klte
+    
+    - name: Configure and build kernel
+      run: |
+        cd nethunter_kernel_klte
+        ./menuconfig.sh
+        ./build.sh
+    
+    - name: Clone and build kernel modules
+      run: |
+        git clone https://github.com/sd12443/rtl8188eu.git
+        cd rtl8188eu
+        make
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: kernel-build
+        path: |
+          nethunter_kernel_klte/build/arch/arm/boot/zImage
+          rtl8188eu/*.ko
